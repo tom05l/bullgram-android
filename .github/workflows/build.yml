@@ -1,0 +1,76 @@
+name: Build Bullgram APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Fetch pinned inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          V=$(jq -r .apktool_version upstream.json)
+          curl -sSL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v$V/apktool_$V.jar"
+          echo "$(jq -r .apktool_sha256 upstream.json)  apktool.jar" | sha256sum -c
+          gh release download "$(jq -r .mirror_release upstream.json)" -p "$(jq -r .file upstream.json)" -O upstream.apk
+      - name: Patch (production + staging)
+        run: |
+          set -e
+          SHA=$(jq -r .sha256 upstream.json)
+          python3 patch_apk.py --apk upstream.apk --sha256 "$SHA" --out prod-unsigned.apk --work w1 \
+            --apktool apktool.jar --server-ip 141.98.7.179 --pubkey pubkey.asc --google-services google-services.json
+          python3 patch_apk.py --apk upstream.apk --sha256 "$SHA" --out staging-unsigned.apk --work w2 \
+            --apktool apktool.jar --server-ip "${{ vars.STAGING_IP || '193.123.33.66' }}" --pubkey pubkey.asc \
+            --google-services google-services.json --brand "Bullgram Test"
+      - name: Align and sign
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          echo "$KS_B64" | base64 -d > ks.jks
+          V=$(jq -r .version upstream.json)
+          mkdir dist
+          for n in prod staging; do
+            "$BT/zipalign" -f -p 4 $n-unsigned.apk $n-aligned.apk
+            "$BT/apksigner" sign --ks ks.jks --ks-pass env:KS_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS \
+              --out $n.apk $n-aligned.apk
+            "$BT/apksigner" verify --print-certs $n.apk | head -3
+          done
+          cp prod.apk "dist/Bullgram-$V.apk"
+          cp staging.apk "dist/Bullgram-$V-staging.apk"
+          rm -f ks.jks
+          sha256sum dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bullgram-apk
+          path: dist/*.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(jq -r .version upstream.json)
+          gh release create "v$V-b${GITHUB_RUN_NUMBER}" dist/Bullgram-$V.apk dist/Bullgram-$V-staging.apk \
+            --title "Bullgram Android $V (layer 234) build ${GITHUB_RUN_NUMBER}" \
+            --notes "Official Telegram $V patched for Bullgram. Production: 141.98.7.179:42000. The -staging APK talks to the test server." --prerelease

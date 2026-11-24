@@ -1,0 +1,12 @@
+{
+  "name": "Telegram for Android (standalone, telegram.org)",
+  "version": "13.3.1",
+  "versionCode": 73469,
+  "layer": 234,
+  "source_url": "https://telegram.org/dl/android/apk",
+  "mirror_release": "upstream-13.3.1",
+  "file": "Telegram-13.3.1.apk",
+  "sha256": "402d44cdf7b73bc93fde403e11b43e0b469e290ae168055067eb8a7c1629b394",
+  "apktool_version": "3.0.3",
+  "apktool_sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+}
